@@ -1,6 +1,5 @@
 import tensorflow as tf
-from models.adv_crossmodal_triplet_wiki import AdvCrossModalSimple, ModelParams
-#from models.wiki_shallow import AdvCrossModalSimple, ModelParams
+from models.adv_crossmodal_triplet_conditionalD_pascal import AdvCrossModalSimple, ModelParams
 def main(_):
     graph = tf.Graph()
     model_params = ModelParams()
@@ -9,7 +8,7 @@ def main(_):
     with graph.as_default():
         model = AdvCrossModalSimple(model_params)
     with tf.Session(graph=graph) as sess:
-        model.train(sess)
+        # model.train(sess)
         # model.eval_random_rank()
         model.eval(sess)
 

@@ -52,7 +52,7 @@ class ModelParams(BaseModelParams):
     def __init__(self):
         BaseModelParams.__init__(self)
 
-        self.epoch = 50
+        self.epoch = 500
         self.margin = .1
         self.alpha = 5
         self.batch_size = 64
@@ -115,6 +115,12 @@ class AdvCrossModalSimple(BaseModel):
         self.label_loss = tf.nn.softmax_cross_entropy_with_logits(labels=self.y, logits=logits_v) + \
             tf.nn.softmax_cross_entropy_with_logits(labels=self.y, logits=logits_w)
         self.label_loss = tf.reduce_mean(self.label_loss)
+        self.label_img_pred = tf.argmax(logits_v, 1)
+        self.label_img_acc = tf.reduce_mean(tf.cast(tf.equal(self.label_img_pred, tf.argmax(self.y, 1)), tf.float32))
+        self.label_shape_pred = tf.argmax(logits_w, 1)
+        self.label_shape_acc = tf.reduce_mean(
+            tf.cast(tf.equal(self.label_shape_pred, tf.argmax(self.y, 1)), tf.float32))
+        self.label_class_acc = tf.divide(tf.add(self.label_img_acc, self.label_shape_acc), 2.0)
         self.emb_loss = 100*self.label_loss + self.triplet_loss
         self.emb_v_class = self.domain_classifier(self.emb_v, self.l)
         self.emb_w_class = self.domain_classifier(self.emb_w, self.l, reuse=True)
@@ -126,6 +132,10 @@ class AdvCrossModalSimple(BaseModel):
         self.domain_class_loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.emb_v_class, labels=all_emb_w) + \
             tf.nn.softmax_cross_entropy_with_logits(logits=self.emb_w_class, labels=all_emb_v)
         self.domain_class_loss = tf.reduce_mean(self.domain_class_loss)
+        self.domain_img_class_acc = tf.equal(tf.greater(0.5, self.emb_v_class), tf.greater(0.5, all_emb_w))
+        self.domain_shape_class_acc = tf.equal(tf.greater(self.emb_w_class, 0.5), tf.greater(all_emb_v, 0.5))
+        self.domain_class_acc = tf.reduce_mean(
+            tf.cast(tf.concat([self.domain_img_class_acc, self.domain_shape_class_acc], axis=0), tf.float32))
 
         self.t_vars = tf.trainable_variables()
         self.vf_vars = [v for v in self.t_vars if 'vf_' in v.name]
@@ -212,7 +222,7 @@ class AdvCrossModalSimple(BaseModel):
                           self.y: b,
                           self.y_single: np.transpose([batch_labels]),
                           self.l: l})
-                label_loss_val, triplet_loss_val, emb_loss_val, domain_loss_val= sess.run([self.label_loss, self.triplet_loss, self.emb_loss, self.domain_class_loss],
+                label_loss_val, triplet_loss_val, emb_loss_val, domain_loss_val, domain_acc_val, label_acc_val= sess.run([self.label_loss, self.triplet_loss, self.emb_loss, self.domain_class_loss, self.domain_class_acc, self.label_class_acc],
                           feed_dict={self.tar_img: batch_feat,
                           self.tar_txt: batch_vec,
                           self.pos_txt: batch_vec,
@@ -222,8 +232,8 @@ class AdvCrossModalSimple(BaseModel):
                           self.y: b,
                           self.y_single: np.transpose([batch_labels]),
                           self.l: l})
-                print('Epoch: [%2d][%4d/%4d] time: %4.4f, emb_loss: %.8f, domain_loss: %.8f, label_loss: %.8f, triplet_loss: %.8f' %(
-                    epoch, idx, self.data_iter.num_train_batch, time.time() - start_time, emb_loss_val, domain_loss_val, label_loss_val, triplet_loss_val
+                print('Epoch: [%2d][%4d/%4d] time: %4.4f, emb_loss: %.8f, domain_loss: %.8f, label_loss: %.8f, triplet_loss: %.8f, domain_acc:%.8f, label_acc:%.8f' %(
+                    epoch, idx, self.data_iter.num_train_batch, time.time() - start_time, emb_loss_val, domain_loss_val, label_loss_val, triplet_loss_val, domain_acc_val, label_acc_val
                 ))
             #if epoch == (self.model_params.epoch - 1): 
             #    self.emb_v_eval, self.emb_w_eval = sess.run([self.emb_v, self.emb_w],     
@@ -271,6 +281,8 @@ class AdvCrossModalSimple(BaseModel):
 
     def eval(self, sess):
         start = time.time()
+        self.saver = tf.train.Saver()
+        self.load(sess)
 
         test_img_feats_trans = []
         test_txt_vecs_trans = []
@@ -293,7 +305,7 @@ class AdvCrossModalSimple(BaseModel):
         top_k = self.model_params.top_k
         avg_precs = []
         all_precs = []
-        for k in top_k:
+        for k in range(1, top_k+1):
             for i in range(len(test_txt_vecs_trans)):
                 query_label = test_labels[i]
 
@@ -312,6 +324,7 @@ class AdvCrossModalSimple(BaseModel):
                         continue
                     for ii in top_k:
                         retrieved_label = test_labels[ii]
+                        print ("retrievaled label:", retrieved_label)
                         if np.sum(retrieved_label) == query_label:
                             hits += 1
                     precs.append(float(hits) / float(topk))
@@ -321,6 +334,7 @@ class AdvCrossModalSimple(BaseModel):
             mean_avg_prec = np.mean(avg_precs)
             all_precs.append(mean_avg_prec)
         print('[Eval - txt2img] mAP: %f in %4.4fs' % (all_precs[0], (time.time() - start)))
+        print(all_precs)
         t2i = all_precs[0]
         #with open('./data/wikipedia_dataset/txt2img_all_precision.pkl', 'wb') as f:
         #    cPickle.dump(all_precs, f, cPickle.HIGHEST_PROTOCOL)     
@@ -330,7 +344,7 @@ class AdvCrossModalSimple(BaseModel):
         avg_precs = []
         all_precs = []
 
-        for k in top_k:        
+        for k in range(1, self.model_params.top_k+1):
             for i in range(len(test_img_feats_trans)):
                 query_img_feat = test_img_feats_trans[i]
                 ground_truth_label = test_labels[i]
@@ -358,7 +372,7 @@ class AdvCrossModalSimple(BaseModel):
             mean_avg_prec = np.mean(avg_precs)
             all_precs.append(mean_avg_prec)            
         print('[Eval - img2txt] mAP: %f in %4.4fs' % (all_precs[0], (time.time() - start)))
-
+        print(all_precs)
         
         
         #with open('./data/wikipedia_dataset/text_words_map.pkl', 'wb') as f:
@@ -413,6 +427,10 @@ class AdvCrossModalSimple(BaseModel):
                 }
                 retrieval_results.append(result)
 
+        precisions = precisions * 1.0 / len(test_txt_vecs_trans)
+        print("txt2img precision:", precisions)
+        np.save('./data/wikipedia_dataset/txt2img-pair-p', np.array(precisions))
+
 
         with open('./data/wikipedia_dataset/txt2img-retrievals.pkl', 'wb') as f:
             cPickle.dump(retrieval_results, f, cPickle.HIGHEST_PROTOCOL)
@@ -447,6 +465,9 @@ class AdvCrossModalSimple(BaseModel):
                     'retrieval': [test_txt_names[hh] for hh in sorted_idx[0:5]]
                 }
                 retrieval_results.append(result)
+        precisions = precisions * 1.0 / len(test_img_feats_trans)
+        print("img2txt precision:", precisions)
+        np.save('./data/wikipedia_dataset/img2txt-pair-p', np.array(precisions))
 
         with open('./data/wikipedia_dataset/img2txt-retrievals.pkl', 'wb') as f:
             cPickle.dump(retrieval_results, f, cPickle.HIGHEST_PROTOCOL)

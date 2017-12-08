@@ -315,6 +315,7 @@ class AdvCrossModalSimple(BaseModel):
                 print('Epoch: [%2d][%4d/%4d] time: %4.4f, emb_loss: %.8f, domain_loss: %.8f, label_loss: %.8f, similar_loss: %.8f, dissimilar_loss: %.8f' %(
                     epoch, idx, self.data_iter.num_train_batch, time.time() - start_time, emb_loss_val, domain_loss_val, label_loss_val, similar_loss_val, dissimilar_loss_val
                 ))
+                self.save(epoch, sess)
             #if epoch == (self.model_params.epoch - 1): 
             #    self.emb_v_eval, self.emb_w_eval = sess.run([self.emb_v, self.emb_w],     
             #             feed_dict={
@@ -378,7 +379,9 @@ class AdvCrossModalSimple(BaseModel):
         #with open('./data/wikipedia_dataset/test_feats_transformed.pkl', 'wb') as f:
         #    cPickle.dump(test_feats_trans, f, cPickle.HIGHEST_PROTOCOL)        
         with open('./data/wiki_shallow/test_feats_transformed.pkl', 'wb') as f:
-            cPickle.dump(test_feats_trans, f, cPickle.HIGHEST_PROTOCOL)                   
+            cPickle.dump(test_feats_trans, f, cPickle.HIGHEST_PROTOCOL)
+        np.save('./data/wiki_shallow/wiki_test_img_feats_transformed.npy', test_img_feats_trans)
+        np.save('./data/wiki_shallow/wiki_test_txt_feats_transformed.npy', test_txt_vecs_trans)
         print('[Eval] transformed test features in %4.4f' % (time.time() - start))
         #k = self.model_params.top_k
         avg_precs = []

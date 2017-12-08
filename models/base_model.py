@@ -180,6 +180,7 @@ class BaseModel(object):
 
         ckpt_path = tf.train.latest_checkpoint(checkpoint_dir)
         if ckpt_path is not None:
+            print(ckpt_path)
             self.saver.restore(sess, ckpt_path)
             return True
         else:
