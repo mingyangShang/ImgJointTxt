@@ -72,7 +72,7 @@ class ModelParams(BaseModelParams):
         self.semantic_emb_dim = 200
         self.dataset_name = 'wikipedia_dataset'
         self.model_name = 'adv_semantic_zsl'
-        self.model_dir = 'adv_semantic_zsl_conditional_reductFirst_%d_%d_%d' % (self.visual_feat_dim, self.word_vec_dim, self.semantic_emb_dim)
+        self.model_dir = 'adv_semantic_zsl_conditional_paperReduct_%d_%d_%d' % (self.visual_feat_dim, self.word_vec_dim, self.semantic_emb_dim)
 
         self.checkpoint_dir = 'checkpoint'
         self.sample_dir = 'samples'
@@ -148,19 +148,38 @@ class AdvCrossModalSimple(BaseModel):
         #     tf.cast(tf.concat([self.domain_img_class_acc, self.domain_shape_class_acc], axis=0), tf.float32))
 
         # conditional D loss
+        label_batch_zeros, label_batch_ones = tf.zeros([self.model_params.batch_size, 1]), tf.ones([self.model_params.batch_size, 1])
+
         self.img_conditional_v_pred = self.img_conditional_classifier(self.tar_img, self.emb_v, self.l)
         self.img_conditional_w_pred = self.img_conditional_classifier(self.tar_img, self.emb_w, self.l, reuse=True)
-        self.img_conditional_loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.img_conditional_v_pred, labels=all_emb_w) + \
-                                    tf.nn.softmax_cross_entropy_with_logits(logits=self.img_conditional_w_pred, labels=all_emb_v)
+        self.unpair_img_conditional_v_pred = self.img_conditional_classifier(tf.reverse(self.tar_img, [0]), self.emb_w, self.l, reuse=True)
+        self.img_conditional_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=self.img_conditional_w_pred, labels=label_batch_ones) + \
+            tf.divide(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.img_conditional_v_pred, labels=label_batch_zeros) + \
+            tf.nn.sigmoid_cross_entropy_with_logits(logits=self.unpair_img_conditional_v_pred, labels=label_batch_zeros), 2.0)
+        # self.img_conditional_loss = tf.log(self.img_conditional_w_pred) + tf.divide(tf.log(1-self.img_conditional_w_pred)+tf.log(1-self.unpair_img_conditional_v_pred), 2.0)
         self.img_conditional_loss = tf.reduce_mean(self.img_conditional_loss)
-        self.img_conditional_acc = tf.divide(tf.add(self.acc_op(self.img_conditional_v_pred, all_emb_w), self.acc_op(self.img_conditional_w_pred, all_emb_v)), 2.0)
+        self.img_conditional_acc = tf.divide(self.acc_op(self.img_conditional_w_pred, label_batch_ones)+self.acc_op(self.img_conditional_v_pred, label_batch_zeros)\
+                                             +self.acc_op(self.unpair_img_conditional_v_pred, label_batch_zeros), 3.0)
+
+        # self.img_conditional_loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.img_conditional_v_pred, labels=all_emb_w) + \
+        #                             tf.nn.softmax_cross_entropy_with_logits(logits=self.img_conditional_w_pred, labels=all_emb_v)
+        # self.img_conditional_loss = tf.reduce_mean(self.img_conditional_loss)
+        # self.img_conditional_acc = tf.divide(tf.add(self.acc_op(self.img_conditional_v_pred, all_emb_w), self.acc_op(self.img_conditional_w_pred, all_emb_v)), 2.0)
 
         self.label_conditional_v_pred = self.label_conditional_classifier(self.tar_txt, self.emb_v, self.l)
         self.label_conditional_w_pred = self.label_conditional_classifier(self.tar_txt, self.emb_w, self.l, reuse=True)
-        self.label_conditional_loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.label_conditional_v_pred, labels=all_emb_w) + \
-            tf.nn.softmax_cross_entropy_with_logits(logits=self.label_conditional_w_pred, labels=all_emb_v)
+        self.unpair_label_conditional_w_pred = self.label_conditional_classifier(tf.reverse(self.tar_txt, [0]), self.emb_w, self.l, reuse=True)
+        self.label_conditional_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=self.label_conditional_w_pred, labels=label_batch_ones) + \
+            tf.divide(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.label_conditional_v_pred, labels=label_batch_zeros) + \
+            tf.nn.sigmoid_cross_entropy_with_logits(logits=self.unpair_label_conditional_w_pred, labels=label_batch_zeros), 2.0)
+        # self.label_conditional_loss = tf.log(self.label_conditional_w_pred) + tf.divide(tf.log(1-self.label_conditional_v_pred)+tf.log(1-self.unpair_label_conditional_w_pred),2.0)
         self.label_conditional_loss = tf.reduce_mean(self.label_conditional_loss)
-        self.label_conditional_acc = tf.divide(tf.add(self.acc_op(self.label_conditional_v_pred, all_emb_w), self.acc_op(self.label_conditional_w_pred, all_emb_v)), 2.0)
+        self.label_conditional_acc = tf.divide(self.acc_op(self.label_conditional_w_pred, label_batch_ones)+self.acc_op(self.label_conditional_v_pred, label_batch_zeros)+\
+            self.acc_op(self.unpair_label_conditional_w_pred, label_batch_zeros), 3.0)
+        # self.label_conditional_loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.label_conditional_v_pred, labels=all_emb_w) + \
+        #     tf.nn.softmax_cross_entropy_with_logits(logits=self.label_conditional_w_pred, labels=all_emb_v)
+        # self.label_conditional_loss = tf.reduce_mean(self.label_conditional_loss)
+        # self.label_conditional_acc = tf.divide(tf.add(self.acc_op(self.label_conditional_v_pred, all_emb_w), self.acc_op(self.label_conditional_w_pred, all_emb_v)), 2.0)
 
 
         # Pair D loss
@@ -227,21 +246,21 @@ class AdvCrossModalSimple(BaseModel):
     def label_conditional_classifier(self, ori_W, E, l, is_training=True, reuse=False):
         with slim.arg_scope([slim.fully_connected], activation_fn=None, reuse=reuse):
             E = flip_gradient(E, l)
-            net = slim.fully_connected(ori_W, 40, scope="lcc_fc_0")
-            net = slim.fully_connected(tf.concat([E, net], axis=1), 10, scope='lcc_fc_1')
-            # net = slim.fully_connected(tf.concat([E, ori_W], axis=1), 512, scope='lcc_fc_0')
-            # net = slim.fully_connected(net, 100, scope='lcc_fc_1')
-            net = slim.fully_connected(net, 2, scope='lcc_fc_2')
+            # net = slim.fully_connected(ori_W, 40, scope="lcc_fc_0")
+            # net = slim.fully_connected(tf.concat([E, net], axis=1), 10, scope='lcc_fc_1')
+            net = slim.fully_connected(tf.concat([E, ori_W], axis=1), 500, scope='lcc_fc_0')
+            net = slim.fully_connected(net, 40, scope='lcc_fc_1')
+            net = slim.fully_connected(net, 1, scope='lcc_fc_2')
         return net
 
     def img_conditional_classifier(self, ori_V, E, l, is_training=False, reuse=False):
         with slim.arg_scope([slim.fully_connected], activation_fn=None, reuse=reuse):
             E = flip_gradient(E, l)
-            # net = slim.fully_connected(tf.concat([E, ori_V], axis=1), 512, scope='icc_fc_0')
-            # net = slim.fully_connected(net, 100, scope='icc_fc_1')
-            net = slim.fully_connected(ori_V, 40, scope='icc_fc_0')
-            net = slim.fully_connected(tf.concat([E, net], axis=1), 10, scope='icc_fc_1')
-            net = slim.fully_connected(net, 2, scope='icc_fc_2')
+            net = slim.fully_connected(tf.concat([E, ori_V], axis=1), 2000, scope='icc_fc_0')
+            net = slim.fully_connected(net, 40, scope='icc_fc_1')
+            # net = slim.fully_connected(ori_V, 40, scope='icc_fc_0')
+            # net = slim.fully_connected(tf.concat([E, net], axis=1), 10, scope='icc_fc_1')
+            net = slim.fully_connected(net, 1, scope='icc_fc_2')
         return net
 
     def find_neg_pair(self, fcs1, fcs2):
@@ -316,7 +335,7 @@ class AdvCrossModalSimple(BaseModel):
                 # TODO no domain classifier
                 # sess.run([emb_train_op, domain_train_op],
                 # Update
-                for i in range(1):
+                for i in range(3):
                     sess.run([emb_train_op],
                               feed_dict={self.tar_img: batch_feat,
                               self.tar_txt: batch_vec,
